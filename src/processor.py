@@ -10,6 +10,7 @@ from PIL import Image
 import traceback
 from sklearn.linear_model import RANSACRegressor
 import traceback
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
 class ImageProcessor:
@@ -694,9 +695,7 @@ class ImageProcessor:
         return fract_dim, r2, log_sizes, log_counts
         
     def generate_histogram(self):
-        """
-        Generate histograms for BGR/grayscale channels with enhanced visualization
-        """
+        """Generate histograms for BGR channels with compatibility fix"""
         if self.current_image is None:
             print("No image loaded for histogram generation")
             return None
@@ -736,12 +735,6 @@ class ImageProcessor:
                     "brightness": float((np.mean(r) + np.mean(g) + np.mean(b)) / 3),
                     "contrast": float((np.std(r) + np.std(g) + np.std(b)) / 3)
                 }
-                
-                # Add inter-channel contrast
-                metrics["r_g_contrast"] = float(np.mean(np.abs(r.astype(float) - g.astype(float))))
-                metrics["r_b_contrast"] = float(np.mean(np.abs(r.astype(float) - b.astype(float))))
-                metrics["g_b_contrast"] = float(np.mean(np.abs(g.astype(float) - b.astype(float))))
-                
             else:  # Grayscale image
                 gray = self.current_image
                 
@@ -761,25 +754,6 @@ class ImageProcessor:
                     "contrast": float(np.std(gray))
                 }
                 
-            # Add histogram shape metrics
-            hist = hist_b if len(self.current_image.shape) == 3 else hist_gray
-            hist_norm = hist / np.sum(hist)
-            
-            # Calculate histogram entropy - higher values indicate more randomness/texture
-            entropy = -np.sum(hist_norm * np.log2(hist_norm + 1e-7))
-            metrics["histogram_entropy"] = float(entropy)
-            
-            # Calculate histogram skewness - indicates if the distribution is skewed
-            pixel_values = np.arange(256)
-            mean = np.sum(pixel_values * hist_norm)
-            variance = np.sum(hist_norm * ((pixel_values - mean) ** 2))
-            std = np.sqrt(variance)
-            if std > 0:
-                skewness = np.sum(hist_norm * ((pixel_values - mean) / std) ** 3)
-                metrics["histogram_skewness"] = float(skewness)
-            else:
-                metrics["histogram_skewness"] = 0
-            
             # Add labels and legend
             ax.set_title('Histogram Analysis')
             ax.set_xlabel('Pixel Value')
@@ -796,43 +770,31 @@ class ImageProcessor:
             ax.title.set_color('white')
             ax.xaxis.label.set_color('white')
             ax.yaxis.label.set_color('white')
-            ax.legend().get_frame().set_facecolor('#2D2D2D')
-            for text in ax.legend().get_texts():
-                text.set_color('white')
             
             # Set grid and spines color
             ax.grid(True, linestyle='--', alpha=0.3, color='gray')
             for spine in ax.spines.values():
                 spine.set_color('gray')
             
-            # Add brightness and contrast markers
-            if len(self.current_image.shape) == 3:
-                brightness = metrics["brightness"]
-                contrast = metrics["contrast"]
-            else:
-                brightness = metrics["mean_value"]
-                contrast = metrics["std_value"]
-                
-            ax.axvline(x=brightness, color='yellow', linestyle='--', alpha=0.7, label='Avg. Brightness')
-            
-            # Add value annotations
-            props = dict(boxstyle='round,pad=0.5', facecolor='#2D2D2D', alpha=0.7)
-            
-            # Add annotation with key metrics
-            textstr = f"Brightness: {brightness:.1f}\nContrast: {contrast:.1f}\nEntropy: {metrics['histogram_entropy']:.2f}"
-            ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=9,
-                    verticalalignment='top', bbox=props, color='white')
-            
             # Tight layout
             fig.tight_layout()
             
-            # Convert plot to image
-            fig.canvas.draw()
-            img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            # Draw the figure to a canvas
+            canvas = FigureCanvasTkAgg(fig, master=None)
+            canvas.draw()
             
-            # Convert RGB to BGR
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            # FIX: Use the get_renderer method instead of tostring_rgb
+            # Get the renderer
+            renderer = canvas.get_renderer()
+            # Get the width and height
+            canvas_width, canvas_height = canvas.get_width_height()
+            
+            # Create a numpy array from the canvas
+            img = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint8)
+            img = img.reshape((canvas_height, canvas_width, 4))  # RGBA format
+            
+            # Convert RGBA to BGR for OpenCV
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
             
             self.processing_history.append(("histogram", img.copy()))
             print("Histogram generation completed successfully")
@@ -840,6 +802,7 @@ class ImageProcessor:
             
         except Exception as e:
             print(f"Error generating histogram: {e}")
+            import traceback
             traceback.print_exc()
             return None, None
     
